@@ -1,0 +1,297 @@
+import 'dart:async';
+
+import 'package:audio_service/audio_service.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:rxdart/rxdart.dart';
+
+import '../config.dart';
+import '../models/pomodoro_state.dart';
+
+/// The single source of truth for the timer + audio.
+///
+/// It runs inside the `audio_service` process, which is kept alive by an
+/// Android foreground service. Because a foreground service prevents the OS
+/// from killing the process, the `Timer.periodic` below keeps ticking and the
+/// brown noise keeps looping even when the screen is off or the app is
+/// backgrounded.
+class PomodoroAudioHandler extends BaseAudioHandler {
+  PomodoroAudioHandler() {
+    _init();
+  }
+
+  /// Loops the brown noise seamlessly for the whole session.
+  final AudioPlayer _noisePlayer = AudioPlayer();
+
+  /// Fires the short "3・2・1" countdown / alert. Kept separate so it can play
+  /// *over* the brown noise without interrupting the loop.
+  final AudioPlayer _sfxPlayer = AudioPlayer();
+
+  /// The reactive Pomodoro snapshot the UI subscribes to.
+  final BehaviorSubject<PomodoroData> _pomodoro =
+      BehaviorSubject<PomodoroData>.seeded(_initialData);
+
+  Timer? _ticker;
+  bool _countdownFiredForPhase = false;
+
+  static const PomodoroData _initialData = PomodoroData(
+    phase: PomodoroPhase.focus,
+    cycle: 1,
+    totalCycles: PomodoroConfig.cyclesBeforeLongBreak,
+    remainingSeconds: PomodoroConfig.focusSeconds,
+    totalSeconds: PomodoroConfig.focusSeconds,
+    isRunning: false,
+    noiseEnabled: true,
+  );
+
+  /// Public stream consumed by Riverpod / the UI.
+  ValueStream<PomodoroData> get pomodoroStream => _pomodoro.stream;
+  PomodoroData get _state => _pomodoro.value;
+
+  Future<void> _init() async {
+    try {
+      // Loop the brown noise seamlessly.
+      await _noisePlayer.setAsset(PomodoroConfig.brownNoiseAsset);
+      await _noisePlayer.setLoopMode(LoopMode.one);
+      await _noisePlayer.setVolume(1.0);
+
+      await _sfxPlayer.setAsset(PomodoroConfig.countdownAsset);
+
+      // Do NOT auto-play here. The brown noise follows the timer: it starts on
+      // play() and stops on pause()/reset(), so the ▶/⏸ button always matches
+      // what you hear.
+    } catch (e) {
+      // Missing assets shouldn't crash the app; the timer still works silently.
+      // ignore: avoid_print
+      print('PomodoroAudioHandler: audio init failed: $e');
+    }
+
+    _publish(); // seeds mediaItem + playbackState for the notification.
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public controls (called from the UI and from the media notification).
+  // ---------------------------------------------------------------------------
+
+  /// Start / resume the countdown. Mapped to the notification "play" button.
+  @override
+  Future<void> play() async {
+    if (_state.isRunning) return;
+    _ensureNoisePlaying();
+    _pomodoro.add(_state.copyWith(isRunning: true));
+    _startTicker();
+    _publish();
+  }
+
+  /// Pause the countdown and silence the brown noise.
+  @override
+  Future<void> pause() async {
+    if (!_state.isRunning) return;
+    _ticker?.cancel();
+    await _noisePlayer.pause();
+    _pomodoro.add(_state.copyWith(isRunning: false));
+    _publish();
+  }
+
+  /// Reset back to cycle 1 / focus and silence the audio.
+  /// Keeps the user's brown-noise on/off preference.
+  Future<void> reset() async {
+    _ticker?.cancel();
+    _countdownFiredForPhase = false;
+    await _noisePlayer.pause();
+    await _noisePlayer.seek(Duration.zero);
+    _pomodoro.add(_initialData.copyWith(noiseEnabled: _state.noiseEnabled));
+    _publish();
+  }
+
+  /// Jump straight to the focus block of [cycle] (1-based). Lets you join a
+  /// session part-way through. Keeps running if the timer was already running.
+  Future<void> jumpToCycle(int cycle) async {
+    final target = cycle.clamp(1, _state.totalCycles);
+    if (target == _state.cycle && _state.phase == PomodoroPhase.focus) return;
+
+    _ticker?.cancel();
+    _countdownFiredForPhase = false;
+    final wasRunning = _state.isRunning;
+    final total = _durationFor(PomodoroPhase.focus);
+
+    _pomodoro.add(_state.copyWith(
+      phase: PomodoroPhase.focus,
+      cycle: target,
+      remainingSeconds: total,
+      totalSeconds: total,
+    ));
+
+    if (wasRunning) {
+      _ensureNoisePlaying();
+      _startTicker();
+    }
+    _publish();
+  }
+
+  /// Toggle the brown noise on/off. Works as a plain Pomodoro timer (countdown
+  /// sound only) when off.
+  Future<void> setNoiseEnabled(bool enabled) async {
+    _pomodoro.add(_state.copyWith(noiseEnabled: enabled));
+    if (enabled) {
+      if (_state.isRunning) _ensureNoisePlaying();
+    } else {
+      await _noisePlayer.pause();
+    }
+    _publish();
+  }
+
+  /// Full teardown — stops audio and removes the notification.
+  @override
+  Future<void> stop() async {
+    _ticker?.cancel();
+    await _noisePlayer.stop();
+    await _sfxPlayer.stop();
+    _pomodoro.add(_initialData.copyWith(noiseEnabled: _state.noiseEnabled));
+    playbackState.add(playbackState.value.copyWith(
+      playing: false,
+      processingState: AudioProcessingState.idle,
+    ));
+    await super.stop();
+  }
+
+  /// audio_service routes unknown custom actions here (e.g. from a widget).
+  @override
+  Future<dynamic> customAction(String name, [Map<String, dynamic>? extras]) {
+    if (name == 'reset') return reset();
+    return super.customAction(name, extras);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Ticking + phase sequencing.
+  // ---------------------------------------------------------------------------
+
+  void _startTicker() {
+    _ticker?.cancel();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
+  }
+
+  void _onTick() {
+    final remaining = _state.remainingSeconds - 1;
+
+    // Fire the countdown SFX once, `countdownLeadSeconds` before the switch.
+    if (!_countdownFiredForPhase &&
+        remaining == PomodoroConfig.countdownLeadSeconds) {
+      _countdownFiredForPhase = true;
+      _playCountdown();
+    }
+
+    if (remaining <= 0) {
+      _advancePhase();
+      return;
+    }
+
+    _pomodoro.add(_state.copyWith(remainingSeconds: remaining));
+    _publish(updateMediaItem: false); // keep notification position fresh
+  }
+
+  /// Moves to the next phase following the 25/5 ×4 / 20 pattern.
+  void _advancePhase() {
+    _countdownFiredForPhase = false;
+    final s = _state;
+
+    PomodoroPhase nextPhase;
+    int nextCycle = s.cycle;
+
+    switch (s.phase) {
+      case PomodoroPhase.focus:
+        // After the 4th focus block, take the long break.
+        if (s.cycle >= PomodoroConfig.cyclesBeforeLongBreak) {
+          nextPhase = PomodoroPhase.longBreak;
+        } else {
+          nextPhase = PomodoroPhase.shortBreak;
+        }
+        break;
+      case PomodoroPhase.shortBreak:
+        nextPhase = PomodoroPhase.focus;
+        nextCycle = s.cycle + 1;
+        break;
+      case PomodoroPhase.longBreak:
+        // Long break over → back to cycle 1.
+        nextPhase = PomodoroPhase.focus;
+        nextCycle = 1;
+        break;
+    }
+
+    final total = _durationFor(nextPhase);
+    _pomodoro.add(s.copyWith(
+      phase: nextPhase,
+      cycle: nextCycle,
+      remainingSeconds: total,
+      totalSeconds: total,
+      isRunning: true, // roll straight into the next phase
+    ));
+    _publish();
+  }
+
+  int _durationFor(PomodoroPhase phase) {
+    switch (phase) {
+      case PomodoroPhase.focus:
+        return PomodoroConfig.focusSeconds;
+      case PomodoroPhase.shortBreak:
+        return PomodoroConfig.shortBreakSeconds;
+      case PomodoroPhase.longBreak:
+        return PomodoroConfig.longBreakSeconds;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Audio helpers.
+  // ---------------------------------------------------------------------------
+
+  void _ensureNoisePlaying() {
+    if (!_state.noiseEnabled) return; // plain-timer mode: no brown noise
+    try {
+      // IMPORTANT: never await play(). just_audio's play() future only
+      // completes when playback ends/stops — for a looping source that is
+      // never, so awaiting it would deadlock the caller (the timer would
+      // never start). Fire-and-forget instead.
+      if (!_noisePlayer.playing) unawaited(_noisePlayer.play());
+    } catch (_) {/* asset may be missing */}
+  }
+
+  void _playCountdown() {
+    try {
+      _sfxPlayer.seek(Duration.zero);
+      unawaited(_sfxPlayer.play());
+    } catch (_) {/* asset may be missing */}
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sync state to audio_service (drives the system media notification).
+  // ---------------------------------------------------------------------------
+
+  void _publish({bool updateMediaItem = true}) {
+    final s = _state;
+
+    if (updateMediaItem) {
+      mediaItem.add(MediaItem(
+        id: 'brown_focus_${s.phase.name}_${s.cycle}',
+        title: s.phase.label,
+        artist: s.phase.isFocus
+            ? 'サイクル ${s.cycle} / ${s.totalCycles}'
+            : 'ブラウンノイズで集中',
+        duration: Duration(seconds: s.totalSeconds),
+      ));
+    }
+
+    playbackState.add(playbackState.value.copyWith(
+      controls: [
+        if (s.isRunning) MediaControl.pause else MediaControl.play,
+        MediaControl.stop,
+      ],
+      systemActions: const {
+        MediaAction.play,
+        MediaAction.pause,
+        MediaAction.stop,
+      },
+      processingState: AudioProcessingState.ready,
+      playing: s.isRunning,
+      updatePosition: Duration(seconds: s.totalSeconds - s.remainingSeconds),
+    ));
+  }
+}
