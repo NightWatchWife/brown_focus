@@ -33,6 +33,12 @@ class PomodoroAudioHandler extends BaseAudioHandler {
   Timer? _ticker;
   bool _countdownFiredForPhase = false;
 
+  /// Wall-clock time the current phase ends while running. The remaining time
+  /// is derived from this rather than counted tick-by-tick, so a throttled or
+  /// backgrounded browser tab (which slows timers) still shows the correct time
+  /// and fast-forwards through any phases that elapsed while it was hidden.
+  DateTime? _phaseEndsAt;
+
   /// Which loop is currently loaded into [_noisePlayer] (brown vs. break), so
   /// we only swap the asset when the phase kind actually changes.
   String? _loadedNoiseAsset;
@@ -82,6 +88,8 @@ class PomodoroAudioHandler extends BaseAudioHandler {
   Future<void> play() async {
     if (_state.isRunning) return;
     _ensureNoisePlaying();
+    _phaseEndsAt =
+        DateTime.now().add(Duration(seconds: _state.remainingSeconds));
     _pomodoro.add(_state.copyWith(isRunning: true));
     _startTicker();
     _publish();
@@ -92,8 +100,10 @@ class PomodoroAudioHandler extends BaseAudioHandler {
   Future<void> pause() async {
     if (!_state.isRunning) return;
     _ticker?.cancel();
+    final remaining = _remainingSecondsAt(DateTime.now());
+    _phaseEndsAt = null;
     await _noisePlayer.pause();
-    _pomodoro.add(_state.copyWith(isRunning: false));
+    _pomodoro.add(_state.copyWith(isRunning: false, remainingSeconds: remaining));
     _publish();
   }
 
@@ -102,6 +112,7 @@ class PomodoroAudioHandler extends BaseAudioHandler {
   Future<void> reset() async {
     _ticker?.cancel();
     _countdownFiredForPhase = false;
+    _phaseEndsAt = null;
     await _noisePlayer.pause();
     await _noisePlayer.seek(Duration.zero);
     _pomodoro.add(_initialData.copyWith(noiseEnabled: _state.noiseEnabled));
@@ -128,6 +139,7 @@ class PomodoroAudioHandler extends BaseAudioHandler {
 
     if (wasRunning) {
       _ensureNoisePlaying();
+      _phaseEndsAt = DateTime.now().add(Duration(seconds: total));
       _startTicker();
     }
     _publish();
@@ -175,27 +187,53 @@ class PomodoroAudioHandler extends BaseAudioHandler {
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
   }
 
-  void _onTick() {
-    final remaining = _state.remainingSeconds - 1;
+  /// Seconds left in the current phase at [now], derived from the deadline.
+  int _remainingSecondsAt(DateTime now) {
+    final end = _phaseEndsAt;
+    if (end == null) return _state.remainingSeconds;
+    final ms = end.difference(now).inMilliseconds;
+    if (ms <= 0) return 0;
+    return (ms / 1000).ceil();
+  }
 
-    // Fire the countdown SFX once, `countdownLeadSeconds` before the switch.
+  void _onTick() {
+    final now = DateTime.now();
+    final end = _phaseEndsAt;
+    if (end == null) return;
+    var boundary = end; // non-null DateTime
+
+    // Fast-forward through every phase whose end already passed. Normally this
+    // loops zero times (one tick per second); after a hidden/throttled tab it
+    // may cross several boundaries at once, staying drift-free by chaining each
+    // new deadline off the previous exact boundary.
+    var advanced = false;
+    while (!now.isBefore(boundary)) {
+      boundary = _advancePhaseFrom(boundary);
+      advanced = true;
+    }
+
+    final remaining = (boundary.difference(now).inMilliseconds / 1000).ceil();
+
+    // Fire the countdown SFX once, within the lead window before the switch.
     if (!_countdownFiredForPhase &&
-        remaining == PomodoroConfig.countdownLeadSeconds) {
+        remaining > 0 &&
+        remaining <= PomodoroConfig.countdownLeadSeconds) {
       _countdownFiredForPhase = true;
       _playCountdown();
     }
 
-    if (remaining <= 0) {
-      _advancePhase();
-      return;
-    }
-
     _pomodoro.add(_state.copyWith(remainingSeconds: remaining));
-    _publish(updateMediaItem: false); // keep notification position fresh
+    if (advanced) {
+      _ensureNoisePlaying(); // swap focus <-> break loop for the new phase
+      _publish();
+    } else {
+      _publish(updateMediaItem: false); // keep notification position fresh
+    }
   }
 
-  /// Moves to the next phase following the 25/5 ×4 / 20 pattern.
-  void _advancePhase() {
+  /// Advances one phase (25/5 ×4 / 20 pattern) as of the exact [boundary] time,
+  /// updates state and the next deadline, and returns the new phase-end time.
+  DateTime _advancePhaseFrom(DateTime boundary) {
     _countdownFiredForPhase = false;
     final s = _state;
 
@@ -223,6 +261,8 @@ class PomodoroAudioHandler extends BaseAudioHandler {
     }
 
     final total = _durationFor(nextPhase);
+    final newEnd = boundary.add(Duration(seconds: total));
+    _phaseEndsAt = newEnd;
     _pomodoro.add(s.copyWith(
       phase: nextPhase,
       cycle: nextCycle,
@@ -230,9 +270,7 @@ class PomodoroAudioHandler extends BaseAudioHandler {
       totalSeconds: total,
       isRunning: true, // roll straight into the next phase
     ));
-    // Swap focus <-> break loop for the new phase.
-    _ensureNoisePlaying();
-    _publish();
+    return newEnd;
   }
 
   int _durationFor(PomodoroPhase phase) {
