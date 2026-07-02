@@ -33,6 +33,10 @@ class PomodoroAudioHandler extends BaseAudioHandler {
   Timer? _ticker;
   bool _countdownFiredForPhase = false;
 
+  /// Which loop is currently loaded into [_noisePlayer] (brown vs. break), so
+  /// we only swap the asset when the phase kind actually changes.
+  String? _loadedNoiseAsset;
+
   static const PomodoroData _initialData = PomodoroData(
     phase: PomodoroPhase.focus,
     cycle: 1,
@@ -49,7 +53,8 @@ class PomodoroAudioHandler extends BaseAudioHandler {
 
   Future<void> _init() async {
     try {
-      // Loop the brown noise seamlessly.
+      // Loop the focus (brown) noise seamlessly to start with.
+      _loadedNoiseAsset = PomodoroConfig.brownNoiseAsset;
       await _noisePlayer.setAsset(PomodoroConfig.brownNoiseAsset);
       await _noisePlayer.setLoopMode(LoopMode.one);
       await _noisePlayer.setVolume(1.0);
@@ -225,6 +230,8 @@ class PomodoroAudioHandler extends BaseAudioHandler {
       totalSeconds: total,
       isRunning: true, // roll straight into the next phase
     ));
+    // Swap focus <-> break loop for the new phase.
+    _ensureNoisePlaying();
     _publish();
   }
 
@@ -243,14 +250,33 @@ class PomodoroAudioHandler extends BaseAudioHandler {
   // Audio helpers.
   // ---------------------------------------------------------------------------
 
+  /// The looping asset that fits the current phase: brown noise for focus,
+  /// the softer wave-like loop for breaks.
+  String _noiseAssetForPhase(PomodoroPhase phase) =>
+      phase.isFocus ? PomodoroConfig.brownNoiseAsset : PomodoroConfig.breakNoiseAsset;
+
+  /// Loads the right loop for the current phase (if it changed) and starts it.
+  /// Safe to call whenever the phase changes or playback (re)starts.
   void _ensureNoisePlaying() {
-    if (!_state.noiseEnabled) return; // plain-timer mode: no brown noise
+    if (!_state.noiseEnabled) return; // plain-timer mode: no background noise
+    unawaited(_syncNoise());
+  }
+
+  Future<void> _syncNoise() async {
     try {
+      final want = _noiseAssetForPhase(_state.phase);
+      if (_loadedNoiseAsset != want) {
+        _loadedNoiseAsset = want;
+        // setAsset stops playback; we restart it below.
+        await _noisePlayer.setAsset(want);
+        await _noisePlayer.setLoopMode(LoopMode.one);
+      }
       // IMPORTANT: never await play(). just_audio's play() future only
       // completes when playback ends/stops — for a looping source that is
-      // never, so awaiting it would deadlock the caller (the timer would
-      // never start). Fire-and-forget instead.
-      if (!_noisePlayer.playing) unawaited(_noisePlayer.play());
+      // never, so awaiting it would deadlock the caller.
+      if (_state.noiseEnabled && !_noisePlayer.playing) {
+        unawaited(_noisePlayer.play());
+      }
     } catch (_) {/* asset may be missing */}
   }
 
@@ -274,7 +300,7 @@ class PomodoroAudioHandler extends BaseAudioHandler {
         title: s.phase.label,
         artist: s.phase.isFocus
             ? 'サイクル ${s.cycle} / ${s.totalCycles}'
-            : 'ブラウンノイズで集中',
+            : 'ゆったり休憩',
         duration: Duration(seconds: s.totalSeconds),
       ));
     }

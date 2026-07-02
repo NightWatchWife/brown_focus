@@ -15,5 +15,7 @@ class PomodoroConfig {
 
   // Asset paths (declared in pubspec.yaml under assets/audio/).
   static const String brownNoiseAsset = 'assets/audio/brown_noise.mp3';
+  // Softer, wave-like loop played during breaks for a more restful feel.
+  static const String breakNoiseAsset = 'assets/audio/break_noise.mp3';
   static const String countdownAsset = 'assets/audio/countdown.mp3';
 }
