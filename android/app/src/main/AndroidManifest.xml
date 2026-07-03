@@ -42,6 +42,13 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!-- Use the Skia renderer instead of Impeller/Vulkan. Impeller has known
+             resume-from-background freezes on some Android GPUs, which matches
+             the "return to app and it's frozen" report. Safe to re-enable later. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+
         <!-- audio_service: the foreground service that keeps audio + timer alive
              while the app is backgrounded / the screen is off. -->
         <service
