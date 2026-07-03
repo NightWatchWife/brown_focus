@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:rxdart/rxdart.dart';
 
@@ -66,6 +67,18 @@ class PomodoroAudioHandler extends BaseAudioHandler {
       await _noisePlayer.setVolume(1.0);
 
       await _sfxPlayer.setAsset(PomodoroConfig.countdownAsset);
+
+      // Configure the audio session and react to interruptions. Without this a
+      // transient focus loss (a notification sound, another app, a call) pauses
+      // the loop and it never resumes — the reported "background audio cuts out
+      // after a while" bug.
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration.music());
+      session.interruptionEventStream.listen(_onInterruption);
+      session.becomingNoisyEventStream.listen((_) {
+        // Headphones unplugged / output route lost — pause like other players.
+        if (_state.isRunning) pause();
+      });
 
       // Do NOT auto-play here. The brown noise follows the timer: it starts on
       // play() and stops on pause()/reset(), so the ▶/⏸ button always matches
@@ -287,6 +300,31 @@ class PomodoroAudioHandler extends BaseAudioHandler {
   // ---------------------------------------------------------------------------
   // Audio helpers.
   // ---------------------------------------------------------------------------
+
+  /// Handle audio focus interruptions (calls, other media, notifications).
+  void _onInterruption(AudioInterruptionEvent event) {
+    if (event.begin) {
+      // A hard interruption pauses us; a duck is handled by the OS (volume dip),
+      // so only stop the loop for non-duck interruptions.
+      if (event.type != AudioInterruptionType.duck) {
+        _noisePlayer.pause();
+      }
+    } else {
+      // Interruption ended — resume the loop if the timer is still running.
+      if (_state.isRunning) _ensureNoisePlaying();
+    }
+  }
+
+  /// Re-assert the intended playback. Call when the app returns to the
+  /// foreground: if the timer should be running but the loop or the ticker
+  /// stopped while backgrounded, restart them and refresh the remaining time.
+  /// Prevents the "return to app and it's stuck / no sound" state.
+  void resyncPlayback() {
+    if (!_state.isRunning) return;
+    _ensureNoisePlaying();
+    if (_ticker == null || !_ticker!.isActive) _startTicker();
+    _onTick();
+  }
 
   /// The looping asset that fits the current phase: brown noise for focus,
   /// the softer wave-like loop for breaks.

@@ -1,16 +1,61 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../models/pomodoro_state.dart';
 import '../providers/pomodoro_providers.dart';
 
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _requestPermissions());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Coming back to the foreground: re-assert playback so a loop or ticker
+    // that stopped while backgrounded recovers instead of leaving the UI stuck.
+    if (state == AppLifecycleState.resumed) {
+      ref.read(audioHandlerProvider).resyncPlayback();
+    }
+  }
+
+  Future<void> _requestPermissions() async {
+    // Android-only: permission_handler's battery/notification permissions are
+    // unsupported on web/desktop and would throw, so bail out elsewhere.
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+
+    // Ongoing notification (Android 13+).
+    await Permission.notification.request();
+    // Ask the user to exempt the app from battery optimization so the OS does
+    // not kill background playback. Only prompts if not already granted.
+    if (await Permission.ignoreBatteryOptimizations.isDenied) {
+      await Permission.ignoreBatteryOptimizations.request();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final asyncState = ref.watch(pomodoroProvider);
     final handler = ref.read(audioHandlerProvider);
 

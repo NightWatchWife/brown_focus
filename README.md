@@ -34,6 +34,8 @@
   <img src="docs/screenshots/06_background_notification.png" width="60%" alt="バックグラウンド再生中のメディア通知" />
 </p>
 
+初回起動時に通知の許可と「バックグラウンドでの常時実行（電池の最適化から除外）」を求めます。確実なバックグラウンド再生のため、どちらも許可することを推奨します。通話や他アプリの再生などで一時的に音が止まった場合も、割り込み終了後に自動で再開します。
+
 実機 (Pixel 6a / Android 16) で、アプリをホームに送った状態でも以下を確認済みです。
 
 - フォアグラウンドサービス稼働: `isForeground=true`, タイプ `mediaPlayback`, 通知フラグ `ONGOING | NO_CLEAR | FOREGROUND_SERVICE`

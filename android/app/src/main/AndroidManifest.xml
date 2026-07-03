@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Android 13+ requires runtime permission to post the ongoing notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Let the user exempt the app from battery optimization so the OS does not
+         kill background playback. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:label="brown_focus"

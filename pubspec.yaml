@@ -46,6 +46,14 @@ dependencies:
   # pinned here so we can import it directly in the audio handler.
   rxdart: ^0.28.0
 
+  # Audio focus / interruption handling so background playback resumes after
+  # transient interruptions (calls, notifications, other apps).
+  audio_session: ^0.2.4
+
+  # Runtime permissions + battery-optimization exemption prompt so the OS does
+  # not kill background playback.
+  permission_handler: ^12.0.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
