@@ -14,8 +14,11 @@ class PomodoroConfig {
   static const int countdownLeadSeconds = 3;
 
   // Asset paths (declared in pubspec.yaml under assets/audio/).
-  static const String brownNoiseAsset = 'assets/audio/brown_noise.mp3';
+  // The loops are OGG (Vorbis): unlike MP3 it is gapless, so LoopMode.one has
+  // no click at the wrap. They are also generated as inherently periodic noise
+  // (IFFT), so the start and end join seamlessly.
+  static const String brownNoiseAsset = 'assets/audio/brown_noise.ogg';
   // Softer, wave-like loop played during breaks for a more restful feel.
-  static const String breakNoiseAsset = 'assets/audio/break_noise.mp3';
+  static const String breakNoiseAsset = 'assets/audio/break_noise.ogg';
   static const String countdownAsset = 'assets/audio/countdown.mp3';
 }
