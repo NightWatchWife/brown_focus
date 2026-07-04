@@ -38756,10 +38756,10 @@ A.hC.prototype={
 iJ(){var s=0,r=A.m(t.H),q=1,p=[],o=this,n,m,l,k,j
 var $async$iJ=A.i(function(a,b){if(a===1){p.push(b)
 s=q}for(;;)switch(s){case 0:q=3
-o.ax="assets/audio/brown_noise.mp3"
+o.ax="assets/audio/brown_noise.ogg"
 l=o.x
 s=6
-return A.h(l.x4("assets/audio/brown_noise.mp3"),$async$iJ)
+return A.h(l.x4("assets/audio/brown_noise.ogg"),$async$iJ)
 case 6:s=7
 return A.h(l.cT(B.ef),$async$iJ)
 case 7:s=8
@@ -38938,7 +38938,7 @@ pn(){var s=0,r=A.m(t.H),q=1,p=[],o=this,n,m,l,k,j,i
 var $async$pn=A.i(function(a,b){if(a===1){p.push(b)
 s=q}for(;;)switch(s){case 0:q=3
 m=o.z
-n=m.gn().a===B.aI?"assets/audio/brown_noise.mp3":"assets/audio/break_noise.mp3"
+n=m.gn().a===B.aI?"assets/audio/brown_noise.ogg":"assets/audio/break_noise.ogg"
 l=o.ax
 k=n
 s=(l==null?k!=null:l!==k)?6:7
