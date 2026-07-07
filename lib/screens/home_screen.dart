@@ -141,11 +141,18 @@ class _Content extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          _VolumeBar(
-            volume: state.volume,
-            accent: _accent,
-            enabled: state.noiseEnabled,
-            onChanged: onVolume,
+          // Keep the volume bar compact and centered (Spotify-like) rather than
+          // stretching edge-to-edge on wide/web layouts.
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 300),
+              child: _VolumeBar(
+                volume: state.volume,
+                accent: _accent,
+                enabled: state.noiseEnabled,
+                onChanged: onVolume,
+              ),
+            ),
           ),
           const SizedBox(height: 24),
         ],
