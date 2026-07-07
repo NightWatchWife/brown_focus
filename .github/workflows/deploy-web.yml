@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  pages: write
 
 concurrency:
   group: pages-deploy
@@ -36,3 +37,29 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./build/web
           publish_branch: gh-pages
+
+      # Pushing to gh-pages does not reliably make GitHub rebuild Pages (builds
+      # have stalled for days on this repo). Explicitly request a build and wait
+      # for it to go live, so every push is actually reflected on the site.
+      - name: Trigger and wait for GitHub Pages build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          sleep 5
+          curl -sf -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/pages/builds" || true
+          for i in $(seq 1 40); do
+            st=$(curl -s \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/pages/builds/latest" \
+              | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+            echo "pages build status: $st"
+            [ "$st" = "built" ] && { echo "Pages is live"; exit 0; }
+            [ "$st" = "errored" ] && { echo "Pages build errored"; exit 1; }
+            sleep 15
+          done
+          echo "Timed out waiting for Pages build"; exit 1

@@ -35,6 +35,7 @@ class PomodoroData {
     required this.totalSeconds,
     required this.isRunning,
     required this.noiseEnabled,
+    required this.volume,
   });
 
   final PomodoroPhase phase;
@@ -52,6 +53,9 @@ class PomodoroData {
   /// Whether the brown noise plays while the timer runs. When false the app is
   /// a plain Pomodoro timer with only the countdown sound.
   final bool noiseEnabled;
+
+  /// Background-noise volume, 0.0–1.0.
+  final double volume;
 
   /// 0.0 – 1.0 progress through the current phase.
   double get progress {
@@ -74,6 +78,7 @@ class PomodoroData {
     int? totalSeconds,
     bool? isRunning,
     bool? noiseEnabled,
+    double? volume,
   }) {
     return PomodoroData(
       phase: phase ?? this.phase,
@@ -83,6 +88,7 @@ class PomodoroData {
       totalSeconds: totalSeconds ?? this.totalSeconds,
       isRunning: isRunning ?? this.isRunning,
       noiseEnabled: noiseEnabled ?? this.noiseEnabled,
+      volume: volume ?? this.volume,
     );
   }
 }

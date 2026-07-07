@@ -52,6 +52,7 @@ class PomodoroAudioHandler extends BaseAudioHandler {
     totalSeconds: PomodoroConfig.focusSeconds,
     isRunning: false,
     noiseEnabled: true,
+    volume: 0.8,
   );
 
   /// Public stream consumed by Riverpod / the UI.
@@ -64,7 +65,7 @@ class PomodoroAudioHandler extends BaseAudioHandler {
       _loadedNoiseAsset = PomodoroConfig.brownNoiseAsset;
       await _noisePlayer.setAsset(PomodoroConfig.brownNoiseAsset);
       await _noisePlayer.setLoopMode(LoopMode.one);
-      await _noisePlayer.setVolume(1.0);
+      await _noisePlayer.setVolume(_state.volume);
 
       await _sfxPlayer.setAsset(PomodoroConfig.countdownAsset);
 
@@ -156,6 +157,16 @@ class PomodoroAudioHandler extends BaseAudioHandler {
       _startTicker();
     }
     _publish();
+  }
+
+  /// Set the background-noise volume (0.0–1.0).
+  Future<void> setVolume(double volume) async {
+    final v = volume.clamp(0.0, 1.0);
+    _pomodoro.add(_state.copyWith(volume: v));
+    try {
+      await _noisePlayer.setVolume(v);
+    } catch (_) {/* player may not be ready */}
+    // Note: not published to the media notification — volume isn't part of it.
   }
 
   /// Toggle the brown noise on/off. Works as a plain Pomodoro timer (countdown
@@ -346,6 +357,7 @@ class PomodoroAudioHandler extends BaseAudioHandler {
         // setAsset stops playback; we restart it below.
         await _noisePlayer.setAsset(want);
         await _noisePlayer.setLoopMode(LoopMode.one);
+        await _noisePlayer.setVolume(_state.volume);
       }
       // IMPORTANT: never await play(). just_audio's play() future only
       // completes when playback ends/stops — for a looping source that is

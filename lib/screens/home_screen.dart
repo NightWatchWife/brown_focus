@@ -71,6 +71,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             onReset: handler.reset,
             onToggleNoise: handler.setNoiseEnabled,
             onSelectCycle: handler.jumpToCycle,
+            onVolume: handler.setVolume,
           ),
         ),
       ),
@@ -86,6 +87,7 @@ class _Content extends StatelessWidget {
     required this.onReset,
     required this.onToggleNoise,
     required this.onSelectCycle,
+    required this.onVolume,
   });
 
   final PomodoroData state;
@@ -94,6 +96,7 @@ class _Content extends StatelessWidget {
   final VoidCallback onReset;
   final ValueChanged<bool> onToggleNoise;
   final ValueChanged<int> onSelectCycle;
+  final ValueChanged<double> onVolume;
 
   Color get _accent {
     switch (state.phase) {
@@ -126,7 +129,7 @@ class _Content extends StatelessWidget {
             onReset: onReset,
             onToggleNoise: onToggleNoise,
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           Text(
             state.noiseEnabled
                 ? 'ブラウンノイズ ON'
@@ -137,7 +140,78 @@ class _Content extends StatelessWidget {
               letterSpacing: 0.3,
             ),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 10),
+          _VolumeBar(
+            volume: state.volume,
+            accent: _accent,
+            enabled: state.noiseEnabled,
+            onChanged: onVolume,
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+}
+
+/// Horizontal volume control for the background noise.
+class _VolumeBar extends StatelessWidget {
+  const _VolumeBar({
+    required this.volume,
+    required this.accent,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final double volume;
+  final Color accent;
+  final bool enabled;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = enabled ? accent : Colors.white.withOpacity(0.25);
+    final icon = volume <= 0.01
+        ? Icons.volume_off_rounded
+        : volume < 0.5
+            ? Icons.volume_down_rounded
+            : Icons.volume_up_rounded;
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.5,
+      child: Row(
+        children: [
+          Icon(icon, size: 22, color: Colors.white.withOpacity(0.7)),
+          Expanded(
+            child: SliderTheme(
+              data: SliderThemeData(
+                trackHeight: 4,
+                activeTrackColor: active,
+                inactiveTrackColor: Colors.white.withOpacity(0.12),
+                thumbColor: active,
+                overlayColor: accent.withOpacity(0.18),
+                thumbShape:
+                    const RoundSliderThumbShape(enabledThumbRadius: 8),
+                overlayShape:
+                    const RoundSliderOverlayShape(overlayRadius: 16),
+              ),
+              child: Slider(
+                value: volume.clamp(0.0, 1.0),
+                onChanged: enabled ? onChanged : null,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 38,
+            child: Text(
+              '${(volume * 100).round()}%',
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 13,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
         ],
       ),
     );

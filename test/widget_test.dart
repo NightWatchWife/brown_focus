@@ -14,6 +14,7 @@ void main() {
       totalSeconds: PomodoroConfig.focusSeconds,
       isRunning: false,
       noiseEnabled: true,
+      volume: 0.8,
     );
 
     expect(data.formattedRemaining, '25:00');
@@ -30,6 +31,7 @@ void main() {
       totalSeconds: 300,
       isRunning: true,
       noiseEnabled: false,
+      volume: 0.8,
     );
 
     expect(data.progress, 0.5);
